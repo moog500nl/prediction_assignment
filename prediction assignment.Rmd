@@ -1,0 +1,161 @@
+---
+title: "Prediction Assignment"
+author: "Marenco Kemp"
+date: "29/08/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+
+```{r libraries, message=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+library(gbm)
+library(parallel)
+library(doParallel)
+library(e1071)
+library(visdat)
+library(parallel)
+```
+
+
+## Load the training & test data
+
+```{r getting data, message=FALSE, warning=FALSE}
+train_source <- read.csv('./pml-training.csv', header=TRUE)
+test_source <- read.csv('./pml-testing.csv', header=TRUE)
+dim(train_source)
+dim(test_source)
+```
+
+# There are 19622 observations in the training data and 160 variables. The test data only contains 20 observations and also 160 variables. 
+
+## Can we remove any variables in order to simplify model?
+
+Actual specific usage data line the given files only start at variable number 8. The ones prior will intuitively not help us predict how well they do the exercise (classe) so variables 1 to 7 will be removed. 
+
+```{r is.na}
+table(is.na(train_source))
+```
+
+There's a significant amount of NA values in the data (based on our data load criteria). 1,925,192 to be exact. These will need to be removed. Visualisation below.
+
+```{r na visualisation}
+vis_dat(train_source, warn_large_data = FALSE, palette="default")
+```
+
+Let's remove any variables which have more than 95% of their data as NA and as discussed before, also remove the first 7 variables. 
+
+```{r remove NA}
+# Remove variables with 'Nearly Zero Variance'
+nzv <- nearZeroVar(train_source)
+train_source  <- train_source[, -nzv]
+test_source  <- test_source[, -nzv]
+
+# Remove NA values
+mostlyNA <- sapply(train_source, function(x) mean(is.na(x))) > 0.95
+train_source <- train_source[, mostlyNA == FALSE]
+test_source <- test_source[, mostlyNA == FALSE]
+
+# Remove first 7 variables
+train_source <- train_source[, -c(1:7)]
+test_source <- test_source[, -c(1:7)]
+```
+
+This will leave us with 52 variables. 
+
+## Splitting the data for modeling.
+
+We partition the training dataset (train_Data_source) into two sets: 60% of the training data for the modeling process and the remaining 40% for the test set. The other data file (test_source) is not modified and will be used to predict the right answers for the quiz. 
+
+```{r data split}
+in_train  <- createDataPartition(train_source$classe, p = 0.6, list = FALSE)
+train_set <- train_source[in_train, ]
+test_set  <- train_source[-in_train, ]
+```
+
+
+## Building the prediction model
+
+We will build 3 models. 1) Decision Tree 2) Random Forest 3) Generalised Boosted Model. Each analysis will contain a confusion matrix which will help visualise the predictions. We will pick the model with the highest accuracy to predict the correct answers for the quiz. 
+
+
+# Cross validation
+
+Here we set the cross-validation parameters for the models:
+
+```{r cross validation}
+# decision tree
+fitControlDT <- rpart.control(method = "cv", number = 3, verboseIter = FALSE)
+
+# random forest
+fitControlRF <- trainControl(method = "cv", number = 3, verboseIter = FALSE, allowParallel = TRUE)
+
+# generalized boosted model
+fitControlGBM <- trainControl(method = "repeatedcv", number = 3, repeats = 1, verboseIter = FALSE, allowParallel = TRUE)
+```
+
+
+# Decision Tree
+
+Build the model and the corresponding decision tree diagram. 
+
+```{r decision tree}
+set.seed(1234)
+mod_fit_dt <- rpart(as.factor(classe) ~ .,data = train_set,control = fitControlDT, method = "class")
+
+prp(mod_fit_dt, faclen = 0, box.palette = "OrPu", cex = 0.50, legend.x = 0, legend.y = 1, legend.cex = 1)
+```
+
+Validate the Decision Tree model on the test set (testSet) to determine how well it performed and the accuracy of the results.
+
+
+```{r dt cross validation}
+prediction_dt <- predict(mod_fit_dt, newdata = test_set, type = "class")
+conf_matrix_dt <- confusionMatrix(prediction_dt, test_set$classe)
+print(conf_matrix_dt)
+```
+
+The results from the confusion matrix for the Decision Tree model show a predicted accuracy of 0.7 giving an out-of-sample error rate of 0.3 which is high. 
+
+# Random Forest
+
+Here we build the random forest model and we hope to see better results.
+
+
+```{r random forest}
+set.seed(1234)
+
+mod_fit_rf <- train(classe ~ .,method="rf", data=train_source, trControl=fitControlRF, verbose = FALSE)
+
+print(mod_fit_rf$finalModel)
+```
+
+```{r validate random forest}
+PredictionRF <- predict(mod_fit_rf, newdata = test_set)
+conf_matrix_rf <- confusionMatrix(PredictionRF, test_set$classe)
+print(conf_matrix_rf)
+```
+
+These are excellent prediction results with an accuracy of 1 and a confidence interval of 99.9%. There is a neglible out of sample error. 
+
+No other models wil be explored due to the excellent results derived from the random forest model. 
+
+
+```{r quiz prediction}
+predictionQuiz <- predict(mod_fit_rf, newdata = test_source)
+predictionQuiz
+```
+
+These are our quiz predictions which resulted in a score of 100%. 
+
